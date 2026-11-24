@@ -5,166 +5,291 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Turbo Arena</title>
 <style>
-html,body{margin:0;overflow:hidden;background:#07101d;color:white;font:16px Arial}
-#ui{position:fixed;z-index:2;top:12px;left:50%;transform:translateX(-50%);
-text-align:center;background:#0008;padding:10px 18px;border-radius:12px}
-#help{position:fixed;bottom:12px;left:12px;background:#0008;padding:10px;border-radius:8px}
-canvas{display:block}
+html,body{margin:0;overflow:hidden;background:#050912;color:white;font:15px Arial}
+#ui{position:fixed;z-index:3;top:12px;left:50%;transform:translateX(-50%);
+padding:10px 18px;border-radius:12px;background:#000b;text-align:center}
+#help{position:fixed;bottom:12px;left:12px;padding:10px;border-radius:8px;background:#000b}
 </style>
 </head>
 <body>
-<div id="ui">
-  <b id="score">BLUE 0 — 0 ORANGE</b><br>
-  <span id="time">5:00</span> · <span id="status">Easy bot</span>
-</div>
-<div id="help">
-WASD drive · Space jump/double-jump · Shift boost · R reset
-<select id="difficulty">
-<option>Easy</option><option selected>Medium</option><option>Hard</option>
-</select>
-</div>
+<div id="ui"><b id="score">BLUE 0 — 0 ORANGE</b><br><span id="clock">5:00</span></div>
+<div id="help">WASD drive · Space jump · Shift boost · R reset</div>
 
 <script type="importmap">
-{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"}}
+{
+  "imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm"
+  }
+}
 </script>
 
 <script type="module">
 import * as THREE from "three";
+import * as CANNON from "cannon-es";
 
 const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x07101d);
-scene.fog=new THREE.Fog(0x07101d,45,130);
+scene.background=new THREE.Color(0x050912);
+scene.fog=new THREE.Fog(0x050912,60,150);
 
 const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,300);
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth,innerHeight);
 renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xbfdcff,0x182030,2));
+scene.add(new THREE.HemisphereLight(0x9fc6ff,0x111827,2));
 const sun=new THREE.DirectionalLight(0xffffff,3);
-sun.position.set(20,35,10); sun.castShadow=true; scene.add(sun);
+sun.position.set(20,40,15);
+sun.castShadow=true;
+scene.add(sun);
 
-const FIELD_W=34, FIELD_L=58, WALL=4, GOAL_W=12;
+const world=new CANNON.World({gravity:new CANNON.Vec3(0,-24,0)});
+world.broadphase=new CANNON.SAPBroadphase(world);
+world.defaultContactMaterial.friction=.8;
+world.defaultContactMaterial.restitution=.35;
+
 const keys={};
-addEventListener("keydown",e=>{keys[e.code]=true;if(e.code==="KeyR")reset();});
+addEventListener("keydown",e=>{
+ keys[e.code]=true;
+ if(e.code==="KeyR")reset();
+});
 addEventListener("keyup",e=>keys[e.code]=false);
-addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+addEventListener("resize",()=>{
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
 
-function box(s,c,x,y,z){
- const m=new THREE.Mesh(new THREE.BoxGeometry(...s),new THREE.MeshStandardMaterial({color:c,roughness:.7}));
- m.position.set(x,y,z);m.receiveShadow=true;scene.add(m);return m;
+const blueMat=new THREE.MeshStandardMaterial({
+ color:0x0878ff,metalness:.55,roughness:.25
+});
+const orangeMat=new THREE.MeshStandardMaterial({
+ color:0xff6818,metalness:.55,roughness:.25
+});
+const arenaMat=new THREE.MeshStandardMaterial({
+ color:0x17283c,metalness:.15,roughness:.8
+});
+
+function visualBox(size,position,material=arenaMat){
+ const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),material);
+ mesh.position.set(...position);
+ mesh.receiveShadow=true;
+ mesh.castShadow=true;
+ scene.add(mesh);
+ return mesh;
 }
-function mat(c){return new THREE.MeshStandardMaterial({color:c,roughness:.45,metalness:.15})}
 
-const floor=box([FIELD_W,1,FIELD_L],0x17283b,0,-.5,0);
-box([FIELD_W,4,1],0x273d55,0,1,FIELD_L/2);
-box([FIELD_W,4,1],0x273d55,0,1,-FIELD_L/2);
-box([1,4,FIELD_L],0x273d55,-FIELD_W/2,1,0);
-box([1,4,FIELD_L],0x273d55, FIELD_W/2,1,0);
-box([.18,.03,FIELD_L],0xffffff,0,.03,0);
-box([FIELD_W,.04,.18],0x4d6685,0,.04,0);
-
-function goal(z,color){
- box([GOAL_W,3,.5],color,0,1.5,z);
- box([.5,3,5],color,-GOAL_W/2,1.5,z+(z>0?-2.5:2.5));
- box([.5,3,5],color, GOAL_W/2,1.5,z+(z>0?-2.5:2.5));
+function staticBox(size,position,material=arenaMat){
+ const body=new CANNON.Body({mass:0,material:new CANNON.Material("arena")});
+ body.addShape(new CANNON.Box(new CANNON.Vec3(
+   size[0]/2,size[1]/2,size[2]/2
+ )));
+ body.position.set(...position);
+ world.addBody(body);
+ visualBox(size,position,material);
+ return body;
 }
-goal(FIELD_L/2,0x1267ff); goal(-FIELD_L/2,0xff7518);
 
-function car(color){
- const g=new THREE.Group();
- const body=new THREE.Mesh(new THREE.BoxGeometry(2.4,.65,4),mat(color));
- body.position.y=.75;body.castShadow=true;g.add(body);
- const cabin=new THREE.Mesh(new THREE.BoxGeometry(1.55,.55,1.7),mat(0x18202c));
- cabin.position.set(0,1.2,-.15);cabin.castShadow=true;g.add(cabin);
- for(const x of [-1.05,1.05])for(const z of [-1.35,1.35]){
-  const w=new THREE.Mesh(new THREE.CylinderGeometry(.38,.38,.25,12),mat(0x111111));
-  w.rotation.z=Math.PI/2;w.position.set(x,.42,z);g.add(w);
- }
- scene.add(g);return g;
+/* Floor and full-height arena enclosure */
+staticBox([36,1,60],[0,-.5,0]);
+staticBox([36,14,1],[0,7,30]);
+staticBox([36,14,1],[0,7,-30]);
+staticBox([1,14,60],[-18,7,0]);
+staticBox([1,14,60],[18,7,0]);
+staticBox([36,1,60],[0,15,0]);
+
+/* Rounded-looking transition strips.
+   These are segmented collision surfaces; they avoid sharp visual corners. */
+for(let i=0;i<8;i++){
+ const y=i*.35;
+ const inset=i*.35;
+ staticBox([36-inset*2,.7,1], [0,y,30-i*.35]);
+ staticBox([36-inset*2,.7,1], [0,y,-30+i*.35]);
 }
-const player={mesh:car(0x1677ff),p:new THREE.Vector3(0,0,20),v:new THREE.Vector3(),yaw:Math.PI,jumps:2,boost:100};
-const bot={mesh:car(0xff7518),p:new THREE.Vector3(0,0,-20),v:new THREE.Vector3(),yaw:0,jumps:2,boost:100};
 
-const ball={mesh:new THREE.Mesh(new THREE.SphereGeometry(1.15,24,16),mat(0xf2f2f2)),
- p:new THREE.Vector3(0,1.2,0),v:new THREE.Vector3()};
-ball.mesh.castShadow=true;scene.add(ball.mesh);
+/* Goal trigger volumes */
+const goals=[
+ {z:-29,team:"blue"},
+ {z:29,team:"orange"}
+];
 
-let blue=0,orange=0,remaining=300,last=performance.now(),over=false;
+function goalTrigger(z,team){
+ const body=new CANNON.Body({mass:0,isTrigger:true});
+ body.addShape(new CANNON.Box(new CANNON.Vec3(6,3,2)));
+ body.position.set(0,3,z);
+ body.userData={goal:true,team};
+ world.addBody(body);
 
-function reset(){
- player.p.set(0,0,20);player.v.set(0,0,0);player.yaw=Math.PI;player.jumps=2;
- bot.p.set(0,0,-20);bot.v.set(0,0,0);bot.yaw=0;bot.jumps=2;
- ball.p.set(0,1.2,0);ball.v.set(0,0,0);
+ const color=team==="blue"?0x0878ff:0xff6818;
+ visualBox([12,6,.15],[0,3,z],new THREE.MeshBasicMaterial({
+   color,transparent:true,opacity:.18
+ }));
 }
-function drive(o,forward,turn,dt){
- o.yaw-=turn*dt*2.4;
- const dir=new THREE.Vector3(Math.sin(o.yaw),0,Math.cos(o.yaw));
- o.v.addScaledVector(dir,forward*dt*25);
- const max=forward>0?18:10;
- if(o.v.length()>max)o.v.setLength(max);
- o.v.multiplyScalar(Math.pow(.18,dt));
- o.p.addScaledVector(o.v,dt);
- o.p.x=THREE.MathUtils.clamp(o.p.x,-15,15);
- o.p.z=THREE.MathUtils.clamp(o.p.z,-27,27);
+goals.forEach(g=>goalTrigger(g.z,g.team));
+
+function makeCar(material){
+ const group=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.BoxGeometry(2.3,.7,4),material);
+ body.position.y=.7;
+ body.castShadow=true;
+ group.add(body);
+
+ const cabin=new THREE.Mesh(
+   new THREE.BoxGeometry(1.5,.55,1.7),
+   new THREE.MeshStandardMaterial({color:0x111827,metalness:.4,roughness:.2})
+ );
+ cabin.position.set(0,1.25,-.2);
+ cabin.castShadow=true;
+ group.add(cabin);
+
+ scene.add(group);
+ return group;
 }
-function jump(o){
+
+function makeCarBody(position,material){
+ const body=new CANNON.Body({
+   mass:120,
+   material:new CANNON.Material("car"),
+   linearDamping:.18,
+   angularDamping:.55
+ });
+ body.addShape(new CANNON.Box(new CANNON.Vec3(1.15,.45,2)));
+ body.position.set(...position);
+ body.quaternion.setFromEuler(0,0,0);
+ world.addBody(body);
+ return {body,mesh:makeCar(material),jumps:2,boost:100};
+}
+
+const player=makeCarBody([0,1,20],blueMat);
+const bot=makeCarBody([0,1,-20],orangeMat);
+
+const ballBody=new CANNON.Body({
+ mass:35,
+ material:new CANNON.Material("ball"),
+ linearDamping:.04,
+ angularDamping:.04
+});
+ballBody.addShape(new CANNON.Sphere(1.45));
+ballBody.position.set(0,2,0);
+world.addBody(ballBody);
+
+const ballMesh=new THREE.Mesh(
+ new THREE.SphereGeometry(1.45,32,20),
+ new THREE.MeshStandardMaterial({color:0xf4f4f4,metalness:.2,roughness:.35})
+);
+ballMesh.castShadow=true;
+scene.add(ballMesh);
+
+function driveCar(car,forward,steer,dt){
+ const body=car.body;
+ const forwardAxis=new CANNON.Vec3(0,0,-1);
+ body.quaternion.vmult(forwardAxis,forwardAxis);
+
+ const force=forwardAxis.scale(forward*body.mass*18);
+ body.applyForce(force,body.position);
+
+ body.angularVelocity.y-=steer*dt*5;
+ body.velocity.x*=.985;
+ body.velocity.z*=.985;
+
+ if(keys.ShiftLeft&&car.boost>0&&forward>0){
+   body.applyForce(forwardAxis.scale(body.mass*35),body.position);
+   car.boost-=35*dt;
+ }else car.boost=Math.min(100,car.boost+10*dt);
+}
+
+function jump(car){
  if(!keys.Space)return;
  keys.Space=false;
- if(o.jumps>0){o.jumps--;o.v.y=10}
-}
-function updatePlayer(dt){
- let f=(keys.KeyW?1:0)-(keys.KeyS?1:0),t=(keys.KeyA?1:0)-(keys.KeyD?1:0);
- if(keys.ShiftLeft&&player.boost>0){f+=1.5;player.boost-=35*dt}
- else player.boost=Math.min(100,player.boost+8*dt);
- drive(player,f,t,dt);jump(player);
- player.mesh.position.copy(player.p);player.mesh.rotation.y=player.yaw;
-}
-function updateBot(dt){
- const d=ball.p.clone().sub(bot.p);d.y=0;
- const target=Math.atan2(d.x,d.z);
- let diff=Math.atan2(Math.sin(target-bot.yaw),Math.cos(target-bot.yaw));
- const level=document.querySelector("#difficulty").value;
- const speed=level==="Easy"?.55:level==="Medium"?.8:1;
- drive(bot,speed,THREE.MathUtils.clamp(diff*2,-1,1),dt);
- bot.mesh.position.copy(bot.p);bot.mesh.rotation.y=bot.yaw;
-}
-function collide(o,dt){
- const q=ball.p.clone().sub(o.p);q.y-=.8;
- const dist=q.length();
- if(dist<2.35){
-  const n=q.normalize();ball.p.copy(o.p).addScaledVector(n,2.35);ball.p.y=Math.max(1.1,ball.p.y);
-  ball.v.addScaledVector(n,Math.max(5,o.v.length()*1.25));
+ if(car.jumps>0){
+   car.body.velocity.y=11;
+   car.jumps--;
  }
 }
-function updateBall(dt){
- ball.v.y-=22*dt;ball.p.addScaledVector(ball.v,dt);
- if(ball.p.y<1.15){ball.p.y=1.15;ball.v.y*=-.65;ball.v.x*=.98;ball.v.z*=.98}
- if(Math.abs(ball.p.x)>15){ball.p.x=Math.sign(ball.p.x)*15;ball.v.x*=-.8}
- if(ball.p.z>29){score("blue");return}
- if(ball.p.z<-29){score("orange");return}
- if(Math.abs(ball.p.z)>27){ball.p.z=Math.sign(ball.p.z)*27;ball.v.z*=-.8}
- ball.mesh.position.copy(ball.p);
+
+function sync(car){
+ car.mesh.position.copy(car.body.position);
+ car.mesh.quaternion.copy(car.body.quaternion);
 }
+
+let blueScore=0,orangeScore=0,timeLeft=300,last=performance.now();
+let scored=false;
+
+function reset(){
+ player.body.position.set(0,1,20);
+ player.body.velocity.set(0,0,0);
+ player.body.quaternion.setFromEuler(0,Math.PI,0);
+ player.jumps=2;
+
+ bot.body.position.set(0,1,-20);
+ bot.body.velocity.set(0,0,0);
+ bot.body.quaternion.setFromEuler(0,0,0);
+ bot.jumps=2;
+
+ ballBody.position.set(0,2,0);
+ ballBody.velocity.set(0,0,0);
+ ballBody.angularVelocity.set(0,0,0);
+ scored=false;
+}
+
 function score(team){
- if(team==="blue")blue++;else orange++;
- document.querySelector("#score").textContent=`BLUE ${blue} — ${orange} ORANGE`;
- reset();
+ if(scored)return;
+ scored=true;
+ if(team==="blue")blueScore++;
+ else orangeScore++;
+ document.querySelector("#score").textContent=
+   `BLUE ${blueScore} — ${orangeScore} ORANGE`;
+ setTimeout(reset,900);
 }
-function frame(){
- const now=performance.now(),dt=Math.min((now-last)/1000,.033);last=now;
- if(!over){
-  remaining-=dt;
-  updatePlayer(dt);updateBot(dt);collide(player,dt);collide(bot,dt);updateBall(dt);
-  if(remaining<=0){over=true;document.querySelector("#status").textContent=blue===orange?"DRAW":blue>orange?"BLUE WINS":"ORANGE WINS"}
-  document.querySelector("#time").textContent=`${Math.floor(remaining/60)}:${String(Math.ceil(remaining%60)).padStart(2,"0")}`;
- }
- const cam=player.p.clone().add(new THREE.Vector3(0,9,12));
- camera.position.lerp(cam,.12);camera.lookAt(player.p.x,1,player.p.z-5);
- renderer.render(scene,camera);requestAnimationFrame(frame);
+
+function updateBot(dt){
+ const dx=ballBody.position.x-bot.body.position.x;
+ const dz=ballBody.position.z-bot.body.position.z;
+ const desired=Math.atan2(dx,-dz);
+ const current=bot.body.quaternion.toEulerAngles().y;
+ let diff=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
+ driveCar(bot,.8,THREE.MathUtils.clamp(diff*2,-1,1),dt);
 }
-reset();frame();
+
+function animate(){
+ const now=performance.now();
+ const dt=Math.min((now-last)/1000,.033);
+ last=now;
+
+ timeLeft=Math.max(0,timeLeft-dt);
+ document.querySelector("#clock").textContent=
+   `${Math.floor(timeLeft/60)}:${String(Math.ceil(timeLeft%60)).padStart(2,"0")}`;
+
+ let forward=(keys.KeyW?1:0)-(keys.KeyS?1:0);
+ let steer=(keys.KeyD?1:0)-(keys.KeyA?1:0);
+
+ driveCar(player,forward,steer,dt);
+ jump(player);
+ updateBot(dt);
+
+ world.step(1/60,dt,3);
+
+ sync(player);
+ sync(bot);
+ ballMesh.position.copy(ballBody.position);
+ ballMesh.quaternion.copy(ballBody.quaternion);
+
+ if(ballBody.position.z<-27)score("blue");
+ if(ballBody.position.z>27)score("orange");
+
+ const target=player.mesh.position.clone();
+ const desired=target.clone().add(new THREE.Vector3(0,8,12));
+ camera.position.lerp(desired,.1);
+ camera.lookAt(target.x,target.y+1,target.z-5);
+
+ renderer.render(scene,camera);
+ requestAnimationFrame(animate);
+}
+
+reset();
+animate();
 </script>
 </body>
 </html>
