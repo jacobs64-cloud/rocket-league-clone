@@ -1,295 +1,262 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Turbo Arena</title>
-<style>
-html,body{margin:0;overflow:hidden;background:#050912;color:white;font:15px Arial}
-#ui{position:fixed;z-index:3;top:12px;left:50%;transform:translateX(-50%);
-padding:10px 18px;border-radius:12px;background:#000b;text-align:center}
-#help{position:fixed;bottom:12px;left:12px;padding:10px;border-radius:8px;background:#000b}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Turbo Arena — Physics Prototype</title>
+  <style>
+    html,body{margin:0;overflow:hidden;background:#07101d;color:white;font:14px Arial}
+    #ui{position:fixed;z-index:2;top:12px;left:50%;
+      transform:translateX(-50%);padding:10px 16px;
+      background:#000b;border-radius:10px;text-align:center}
+    #error{color:#ff7777}
+  </style>
 </head>
 <body>
-<div id="ui"><b id="score">BLUE 0 — 0 ORANGE</b><br><span id="clock">5:00</span></div>
-<div id="help">WASD drive · Space jump · Shift boost · R reset</div>
+  <div id="ui">
+    <b>PLAYER PHYSICS TEST</b><br>
+    W/S drive · A/D steer · R reset<br>
+    <span id="speed">Speed: 0</span>
+    <div id="error"></div>
+  </div>
 
-<script type="importmap">
-{
-  "imports":{
-    "three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
-    "cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm"
-  }
-}
-</script>
+  <script type="module">
+    import * as THREE from
+      "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
 
-<script type="module">
-import * as THREE from "three";
-import * as CANNON from "cannon-es";
+    import RAPIER from
+      "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier3d-compat.es.js";
 
-const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x050912);
-scene.fog=new THREE.Fog(0x050912,60,150);
+    const errorBox = document.querySelector("#error");
 
-const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,300);
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(innerWidth,innerHeight);
-renderer.shadowMap.enabled=true;
-renderer.shadowMap.type=THREE.PCFSoftShadowMap;
-document.body.appendChild(renderer.domElement);
+    try {
+      await RAPIER.init();
 
-scene.add(new THREE.HemisphereLight(0x9fc6ff,0x111827,2));
-const sun=new THREE.DirectionalLight(0xffffff,3);
-sun.position.set(20,40,15);
-sun.castShadow=true;
-scene.add(sun);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x07101d);
+      scene.fog = new THREE.Fog(0x07101d, 35, 100);
 
-const world=new CANNON.World({gravity:new CANNON.Vec3(0,-24,0)});
-world.broadphase=new CANNON.SAPBroadphase(world);
-world.defaultContactMaterial.friction=.8;
-world.defaultContactMaterial.restitution=.35;
+      const camera = new THREE.PerspectiveCamera(
+        65, innerWidth / innerHeight, 0.1, 200
+      );
 
-const keys={};
-addEventListener("keydown",e=>{
- keys[e.code]=true;
- if(e.code==="KeyR")reset();
-});
-addEventListener("keyup",e=>keys[e.code]=false);
-addEventListener("resize",()=>{
- camera.aspect=innerWidth/innerHeight;
- camera.updateProjectionMatrix();
- renderer.setSize(innerWidth,innerHeight);
-});
+      const renderer = new THREE.WebGLRenderer({antialias:true});
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
 
-const blueMat=new THREE.MeshStandardMaterial({
- color:0x0878ff,metalness:.55,roughness:.25
-});
-const orangeMat=new THREE.MeshStandardMaterial({
- color:0xff6818,metalness:.55,roughness:.25
-});
-const arenaMat=new THREE.MeshStandardMaterial({
- color:0x17283c,metalness:.15,roughness:.8
-});
+      scene.add(new THREE.HemisphereLight(0xbad6ff, 0x182030, 2));
 
-function visualBox(size,position,material=arenaMat){
- const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),material);
- mesh.position.set(...position);
- mesh.receiveShadow=true;
- mesh.castShadow=true;
- scene.add(mesh);
- return mesh;
-}
+      const sunlight = new THREE.DirectionalLight(0xffffff, 3);
+      sunlight.position.set(15, 30, 10);
+      sunlight.castShadow = true;
+      scene.add(sunlight);
 
-function staticBox(size,position,material=arenaMat){
- const body=new CANNON.Body({mass:0,material:new CANNON.Material("arena")});
- body.addShape(new CANNON.Box(new CANNON.Vec3(
-   size[0]/2,size[1]/2,size[2]/2
- )));
- body.position.set(...position);
- world.addBody(body);
- visualBox(size,position,material);
- return body;
-}
+      const physics = new RAPIER.World({x:0, y:-18, z:0});
+      const dynamicHandles = [];
 
-/* Floor and full-height arena enclosure */
-staticBox([36,1,60],[0,-.5,0]);
-staticBox([36,14,1],[0,7,30]);
-staticBox([36,14,1],[0,7,-30]);
-staticBox([1,14,60],[-18,7,0]);
-staticBox([1,14,60],[18,7,0]);
-staticBox([36,1,60],[0,15,0]);
+      function material(color, emissive=0x000000) {
+        return new THREE.MeshStandardMaterial({
+          color,
+          roughness:.55,
+          metalness:.2,
+          emissive,
+          emissiveIntensity: emissive ? 1.5 : 0
+        });
+      }
 
-/* Rounded-looking transition strips.
-   These are segmented collision surfaces; they avoid sharp visual corners. */
-for(let i=0;i<8;i++){
- const y=i*.35;
- const inset=i*.35;
- staticBox([36-inset*2,.7,1], [0,y,30-i*.35]);
- staticBox([36-inset*2,.7,1], [0,y,-30+i*.35]);
-}
+      function boxMesh(size, position, color) {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(...size),
+          material(color)
+        );
+        mesh.position.set(...position);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        return mesh;
+      }
 
-/* Goal trigger volumes */
-const goals=[
- {z:-29,team:"blue"},
- {z:29,team:"orange"}
-];
+      function staticBox(size, position, color=0x24364c) {
+        const body = physics.createRigidBody(
+          RAPIER.RigidBodyDesc.fixed()
+            .setTranslation(...position)
+        );
 
-function goalTrigger(z,team){
- const body=new CANNON.Body({mass:0,isTrigger:true});
- body.addShape(new CANNON.Box(new CANNON.Vec3(6,3,2)));
- body.position.set(0,3,z);
- body.userData={goal:true,team};
- world.addBody(body);
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(
+            size[0]/2, size[1]/2, size[2]/2
+          ),
+          body
+        );
 
- const color=team==="blue"?0x0878ff:0xff6818;
- visualBox([12,6,.15],[0,3,z],new THREE.MeshBasicMaterial({
-   color,transparent:true,opacity:.18
- }));
-}
-goals.forEach(g=>goalTrigger(g.z,g.team));
+        boxMesh(size, position, color);
+      }
 
-function makeCar(material){
- const group=new THREE.Group();
- const body=new THREE.Mesh(new THREE.BoxGeometry(2.3,.7,4),material);
- body.position.y=.7;
- body.castShadow=true;
- group.add(body);
+      // Simple test arena
+      staticBox([40, 1, 70], [0, -0.5, 0], 0x17283b);
+      staticBox([40, 8, 1], [0, 4, -35]);
+      staticBox([40, 8, 1], [0, 4, 35]);
+      staticBox([1, 8, 70], [-20, 4, 0]);
+      staticBox([1, 8, 70], [20, 4, 0]);
 
- const cabin=new THREE.Mesh(
-   new THREE.BoxGeometry(1.5,.55,1.7),
-   new THREE.MeshStandardMaterial({color:0x111827,metalness:.4,roughness:.2})
- );
- cabin.position.set(0,1.25,-.2);
- cabin.castShadow=true;
- group.add(cabin);
+      // Player rigid body
+      const playerBody = physics.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(0, 2, 18)
+          .setRotation({x:0, y:0, z:0, w:1})
+          .setLinearDamping(0.55)
+          .setAngularDamping(2.5)
+          .setCanSleep(false)
+      );
 
- scene.add(group);
- return group;
-}
+      physics.createCollider(
+        RAPIER.ColliderDesc.cuboid(1.2, 0.45, 2)
+          .setMass(100)
+          .setFriction(1.4)
+          .setRestitution(0.05),
+        playerBody
+      );
 
-function makeCarBody(position,material){
- const body=new CANNON.Body({
-   mass:120,
-   material:new CANNON.Material("car"),
-   linearDamping:.18,
-   angularDamping:.55
- });
- body.addShape(new CANNON.Box(new CANNON.Vec3(1.15,.45,2)));
- body.position.set(...position);
- body.quaternion.setFromEuler(0,0,0);
- world.addBody(body);
- return {body,mesh:makeCar(material),jumps:2,boost:100};
-}
+      const car = new THREE.Group();
 
-const player=makeCarBody([0,1,20],blueMat);
-const bot=makeCarBody([0,1,-20],orangeMat);
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, .8, 4),
+        material(0x0878ff)
+      );
+      body.position.y = .7;
+      body.castShadow = true;
+      car.add(body);
 
-const ballBody=new CANNON.Body({
- mass:35,
- material:new CANNON.Material("ball"),
- linearDamping:.04,
- angularDamping:.04
-});
-ballBody.addShape(new CANNON.Sphere(1.45));
-ballBody.position.set(0,2,0);
-world.addBody(ballBody);
+      const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(1.55, .6, 1.7),
+        new THREE.MeshStandardMaterial({
+          color:0x122238,
+          roughness:.15,
+          metalness:.35,
+          transparent:true,
+          opacity:.9
+        })
+      );
+      cabin.position.set(0, 1.25, -.25);
+      cabin.castShadow = true;
+      car.add(cabin);
 
-const ballMesh=new THREE.Mesh(
- new THREE.SphereGeometry(1.45,32,20),
- new THREE.MeshStandardMaterial({color:0xf4f4f4,metalness:.2,roughness:.35})
-);
-ballMesh.castShadow=true;
-scene.add(ballMesh);
+      scene.add(car);
 
-function driveCar(car,forward,steer,dt){
- const body=car.body;
- const forwardAxis=new CANNON.Vec3(0,0,-1);
- body.quaternion.vmult(forwardAxis,forwardAxis);
+      const keys = {};
+      addEventListener("keydown", event => {
+        keys[event.code] = true;
+        if (event.code === "KeyR") reset();
+      });
+      addEventListener("keyup", event => {
+        keys[event.code] = false;
+      });
 
- const force=forwardAxis.scale(forward*body.mass*18);
- body.applyForce(force,body.position);
+      function reset() {
+        playerBody.setTranslation({x:0, y:2, z:18}, true);
+        playerBody.setLinvel({x:0, y:0, z:0}, true);
+        playerBody.setAngvel({x:0, y:0, z:0}, true);
+        playerBody.setRotation({x:0, y:0, z:0, w:1}, true);
+      }
 
- body.angularVelocity.y-=steer*dt*5;
- body.velocity.x*=.985;
- body.velocity.z*=.985;
+      function drive(dt) {
+        const forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+        const steer = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
 
- if(keys.ShiftLeft&&car.boost>0&&forward>0){
-   body.applyForce(forwardAxis.scale(body.mass*35),body.position);
-   car.boost-=35*dt;
- }else car.boost=Math.min(100,car.boost+10*dt);
-}
+        const rotation = playerBody.rotation();
 
-function jump(car){
- if(!keys.Space)return;
- keys.Space=false;
- if(car.jumps>0){
-   car.body.velocity.y=11;
-   car.jumps--;
- }
-}
+        // Forward direction derived from the rigid body's orientation.
+        const forwardX = -(1 - 2 * (rotation.y * rotation.y +
+                                    rotation.z * rotation.z));
+        const forwardZ = -(2 * (rotation.x * rotation.z -
+                                rotation.w * rotation.y));
 
-function sync(car){
- car.mesh.position.copy(car.body.position);
- car.mesh.quaternion.copy(car.body.quaternion);
-}
+        const velocity = playerBody.linvel();
+        const horizontalSpeed =
+          Math.hypot(velocity.x, velocity.z);
 
-let blueScore=0,orangeScore=0,timeLeft=300,last=performance.now();
-let scored=false;
+        const acceleration = 900;
+        const force = forward * acceleration * dt;
 
-function reset(){
- player.body.position.set(0,1,20);
- player.body.velocity.set(0,0,0);
- player.body.quaternion.setFromEuler(0,Math.PI,0);
- player.jumps=2;
+        playerBody.applyImpulse({
+          x: forwardX * force,
+          y: 0,
+          z: forwardZ * force
+        }, true);
 
- bot.body.position.set(0,1,-20);
- bot.body.velocity.set(0,0,0);
- bot.body.quaternion.setFromEuler(0,0,0);
- bot.jumps=2;
+        // Basic yaw control, limited to avoid unstable spinning.
+        if (horizontalSpeed > 0.4 || Math.abs(forward) > 0) {
+          playerBody.applyTorqueImpulse({
+            x:0,
+            y: -steer * 2.5 * dt,
+            z:0
+          }, true);
+        }
 
- ballBody.position.set(0,2,0);
- ballBody.velocity.set(0,0,0);
- ballBody.angularVelocity.set(0,0,0);
- scored=false;
-}
+        // Clamp horizontal test speed.
+        const maxSpeed = 22;
+        const currentSpeed = Math.hypot(velocity.x, velocity.z);
 
-function score(team){
- if(scored)return;
- scored=true;
- if(team==="blue")blueScore++;
- else orangeScore++;
- document.querySelector("#score").textContent=
-   `BLUE ${blueScore} — ${orangeScore} ORANGE`;
- setTimeout(reset,900);
-}
+        if (currentSpeed > maxSpeed) {
+          const scale = maxSpeed / currentSpeed;
+          playerBody.setLinvel({
+            x: velocity.x * scale,
+            y: velocity.y,
+            z: velocity.z * scale
+          }, true);
+        }
+      }
 
-function updateBot(dt){
- const dx=ballBody.position.x-bot.body.position.x;
- const dz=ballBody.position.z-bot.body.position.z;
- const desired=Math.atan2(dx,-dz);
- const current=bot.body.quaternion.toEulerAngles().y;
- let diff=Math.atan2(Math.sin(desired-current),Math.cos(desired-current));
- driveCar(bot,.8,THREE.MathUtils.clamp(diff*2,-1,1),dt);
-}
+      let previous = performance.now();
 
-function animate(){
- const now=performance.now();
- const dt=Math.min((now-last)/1000,.033);
- last=now;
+      function frame(now) {
+        const dt = Math.min((now - previous) / 1000, 1/30);
+        previous = now;
 
- timeLeft=Math.max(0,timeLeft-dt);
- document.querySelector("#clock").textContent=
-   `${Math.floor(timeLeft/60)}:${String(Math.ceil(timeLeft%60)).padStart(2,"0")}`;
+        drive(dt);
+        physics.step();
 
- let forward=(keys.KeyW?1:0)-(keys.KeyS?1:0);
- let steer=(keys.KeyD?1:0)-(keys.KeyA?1:0);
+        const position = playerBody.translation();
+        const rotation = playerBody.rotation();
 
- driveCar(player,forward,steer,dt);
- jump(player);
- updateBot(dt);
+        car.position.set(position.x, position.y, position.z);
+        car.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
 
- world.step(1/60,dt,3);
+        const velocity = playerBody.linvel();
+        document.querySelector("#speed").textContent =
+          `Speed: ${Math.round(Math.hypot(velocity.x, velocity.z) * 3.6)} km/h`;
 
- sync(player);
- sync(bot);
- ballMesh.position.copy(ballBody.position);
- ballMesh.quaternion.copy(ballBody.quaternion);
+        const cameraTarget = new THREE.Vector3(
+          position.x, position.y + 1, position.z
+        );
 
- if(ballBody.position.z<-27)score("blue");
- if(ballBody.position.z>27)score("orange");
+        const cameraPosition = new THREE.Vector3(
+          position.x, position.y + 7, position.z + 11
+        );
 
- const target=player.mesh.position.clone();
- const desired=target.clone().add(new THREE.Vector3(0,8,12));
- camera.position.lerp(desired,.1);
- camera.lookAt(target.x,target.y+1,target.z-5);
+        camera.position.lerp(cameraPosition, 0.1);
+        camera.lookAt(cameraTarget);
 
- renderer.render(scene,camera);
- requestAnimationFrame(animate);
-}
+        renderer.render(scene, camera);
+        requestAnimationFrame(frame);
+      }
 
-reset();
-animate();
-</script>
+      addEventListener("resize", () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+
+      reset();
+      requestAnimationFrame(frame);
+
+    } catch (error) {
+      console.error(error);
+      errorBox.textContent =
+        "Physics initialization failed. Open DevTools for details.";
+    }
+  </script>
 </body>
 </html>
