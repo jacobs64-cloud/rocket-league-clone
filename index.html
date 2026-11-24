@@ -1,303 +1,161 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>3D Rocket Arena — Fixed Imports</title>
+  <meta charset="UTF-8">
+  <title>3D Car Soccer Game</title>
   <style>
-    body { margin: 0; overflow: hidden; background: #0d1117; font-family: system-ui, sans-serif; color: #e6edf3; }
-    #hud {
-      position: fixed; top: 16px; left: 16px; z-index: 10; background: rgba(13, 17, 23, 0.78);
-      border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 16px;
-      font-size: 13px; line-height: 1.5; pointer-events: none; backdrop-filter: blur(6px);
+    body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+    #ui {
+      position: absolute; top: 20px; width: 100%; text-align: center;
+      color: white; font-size: 32px; font-weight: bold; text-shadow: 2px 2px 4px #000;
+      pointer-events: none;
     }
-    #errBox {
-      display: none; position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 20;
-      background: rgba(127, 29, 29, 0.92); border: 1px solid #f87171; color: #fef2f2;
-      padding: 12px 16px; border-radius: 8px; font-family: monospace; font-size: 12px; white-space: pre-wrap;
-    }
-    .bar { width: 180px; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin-top: 4px; }
-    .fill { height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #ef4444); }
   </style>
-  <script>
-    function showErr(msg) {
-      const box = document.getElementById('errBox');
-      if (box) { box.style.display = 'block'; box.textContent += msg + '\n'; }
-    }
-    window.addEventListener('error', (e) => showErr('Error: ' + e.message + ' (' + e.filename + ':' + e.lineno + ')'));
-    window.addEventListener('unhandledrejection', (e) => showErr('Promise Rejection: ' + (e.reason?.message || e.reason)));
-  </script>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://esm.sh/three@0.169.0",
-        "cannon-es": "https://esm.sh/cannon-es@0.20.0"
-      }
-    }
-  </script>
+  <!-- Load Three.js and Cannon.js for 3D graphics and physics -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
 </head>
 <body>
-  <div id="hud">
-    <div><strong>3D Car Ball Arena</strong></div>
-    <div>W/S: Throttle/Brake · A/D: Steer/Yaw · Shift: Boost</div>
-    <div>Space: Jump/Flip · Q/E: Air Roll · R: Reset</div>
-    <div>Boost: <span id="boostText">100</span>%</div>
-    <div class="bar"><div id="boostBar" class="fill"></div></div>
-    <div id="telemetry" style="margin-top:6px; color:#8b949e;">Mode: Ground</div>
-  </div>
-  <div id="errBox"></div>
+  <div id="ui">BLUE: <span id="score">0</span></div>
 
-  <script type="module">
-    import * as THREE from 'three';
-    import * as CANNON from 'cannon-es';
-
+  <script>
+    // --- 1. SETUP THREE.JS SCENE & CANNON PHYSICS WORLD ---
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0d1117);
-    scene.fog = new THREE.FogExp2(0x0d1117, 0.006);
+    scene.background = new THREE.Color(0x87ceeb);
 
-    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 300);
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
     document.body.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0x99aacc, 0.9));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.2);
-    dirLight.position.set(25, 45, 20);
+    const world = new CANNON.World();
+    world.gravity.set(0, -9.82, 0);
+
+    // --- 2. LIGHTING ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(20, 40, 20);
     dirLight.castShadow = true;
     scene.add(dirLight);
 
-    const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
+    // --- 3. ARENA & STADIUM ---
+    // Physical Ground
+    const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+    groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+    world.addBody(groundBody);
 
-    const groundMat = new CANNON.Material('ground');
-    const carMat = new CANNON.Material('car');
-    const ballMat = new CANNON.Material('ball');
-
-    world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, { friction: 0.15, restitution: 0.1 }));
-    world.addContactMaterial(new CANNON.ContactMaterial(groundMat, ballMat, { friction: 0.4, restitution: 0.72 }));
-    world.addContactMaterial(new CANNON.ContactMaterial(carMat, ballMat, { friction: 0.2, restitution: 0.85 }));
-
-    const arenaW = 60, arenaL = 90, wallH = 14;
-    const floorBody = new CANNON.Body({ mass: 0, material: groundMat });
-    floorBody.addShape(new CANNON.Box(new CANNON.Vec3(arenaW / 2, 0.5, arenaL / 2)));
-    floorBody.position.set(0, -0.5, 0);
-    world.addBody(floorBody);
-
-    const floorMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(arenaW, arenaL),
-      new THREE.MeshStandardMaterial({ color: 0x161b22, roughness: 0.6, metalness: 0.2 })
+    // Visual Field
+    const fieldMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 100),
+      new THREE.MeshStandardMaterial({ color: 0x2e8b57 })
     );
-    floorMesh.rotation.x = -Math.PI / 2;
-    floorMesh.receiveShadow = true;
-    scene.add(floorMesh);
+    fieldMesh.rotation.x = -Math.PI / 2;
+    fieldMesh.receiveShadow = true;
+    scene.add(fieldMesh);
 
-    const grid = new THREE.GridHelper(arenaL, 30, 0x2f81f7, 0x21262d);
-    grid.scale.x = arenaW / arenaL;
-    grid.position.y = 0.02;
-    scene.add(grid);
-
-    function addWall(x, y, z, sx, sy, sz) {
-      const body = new CANNON.Body({ mass: 0, material: groundMat });
-      body.addShape(new CANNON.Box(new CANNON.Vec3(sx / 2, sy / 2, sz / 2)));
-      body.position.set(x, y, z);
-      world.addBody(body);
-
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(sx, sy, sz),
-        new THREE.MeshStandardMaterial({ color: 0x1f2937, transparent: true, opacity: 0.45, roughness: 0.3 })
-      );
-      mesh.position.set(x, y, z);
-      scene.add(mesh);
-    }
-    addWall(0, wallH / 2, -arenaL / 2, arenaW, wallH, 1);
-    addWall(0, wallH / 2, arenaL / 2, arenaW, wallH, 1);
-    addWall(-arenaW / 2, wallH / 2, 0, 1, wallH, arenaL);
-    addWall(arenaW / 2, wallH / 2, 0, 1, wallH, arenaL);
-
-    const carMass = 1000;
-    const carBody = new CANNON.Body({ mass: carMass, material: carMat, linearDamping: 0.05, angularDamping: 0.35 });
-    carBody.addShape(new CANNON.Box(new CANNON.Vec3(1.15, 0.45, 2.1)));
-    carBody.position.set(0, 1.5, 22);
-    world.addBody(carBody);
-
-    const carGroup = new THREE.Group();
-    const chassisMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(2.3, 0.9, 4.2),
-      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.65, roughness: 0.25 })
-    );
-    chassisMesh.castShadow = true;
-    carGroup.add(chassisMesh);
-
-    const cabinMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(1.7, 0.55, 2.0),
-      new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.85, roughness: 0.15 })
-    );
-    cabinMesh.position.set(0, 0.65, -0.2);
-    carGroup.add(cabinMesh);
-
-    const wheelMeshes = [];
-    for (const [wx, wy, wz] of [[-1.2, -0.35, 1.35], [1.2, -0.35, 1.35], [-1.2, -0.35, -1.35], [1.2, -0.35, -1.35]]) {
-      const wMesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.45, 0.45, 0.35, 16),
-        new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 })
-      );
-      wMesh.rotation.z = Math.PI / 2;
-      wMesh.position.set(wx, wy, wz);
-      carGroup.add(wMesh);
-      wheelMeshes.push(wMesh);
-    }
-    scene.add(carGroup);
-
-    const ballRadius = 2.2;
-    const ballBody = new CANNON.Body({ mass: 220, material: ballMat, linearDamping: 0.04, angularDamping: 0.08 });
-    ballBody.addShape(new CANNON.Sphere(ballRadius));
-    ballBody.position.set(0, ballRadius + 1, 0);
+    // --- 4. THE BALL ---
+    const ballRadius = 2;
+    const ballBody = new CANNON.Body({
+      mass: 1,
+      shape: new CANNON.Sphere(ballRadius),
+      position: new CANNON.Vec3(0, 5, 0)
+    });
     world.addBody(ballBody);
 
     const ballMesh = new THREE.Mesh(
       new THREE.SphereGeometry(ballRadius, 32, 32),
-      new THREE.MeshStandardMaterial({ color: 0xf97316, metalness: 0.3, roughness: 0.25, emissive: 0x431407 })
+      new THREE.MeshStandardMaterial({ color: 0xff4500 })
     );
     ballMesh.castShadow = true;
     scene.add(ballMesh);
 
-    const keys = {};
-    window.addEventListener('keydown', (e) => {
-      keys[e.code] = true;
-      if (e.code === 'Space') handleJumpOrFlip();
-      if (e.code === 'KeyR') resetPositions();
+    // --- 5. THE CAR ---
+    const carSize = { x: 2, y: 1, z: 4 };
+    const carBody = new CANNON.Body({
+      mass: 5,
+      shape: new CANNON.Box(new CANNON.Vec3(carSize.x / 2, carSize.y / 2, carSize.z / 2)),
+      position: new CANNON.Vec3(0, 1, 35)
     });
-    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+    world.addBody(carBody);
 
-    let boost = 100;
-    let jumpsRemaining = 2;
-    const prevVel = new THREE.Vector3();
-    const camPos = new THREE.Vector3(0, 10, 35);
+    const carMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(carSize.x, carSize.y, carSize.z),
+      new THREE.MeshStandardMaterial({ color: 0x0088ff })
+    );
+    carMesh.castShadow = true;
+    scene.add(carMesh);
 
-    function resetPositions() {
-      carBody.position.set(0, 1.5, 22);
-      carBody.velocity.set(0, 0, 0);
-      carBody.angularVelocity.set(0, 0, 0);
-      carBody.quaternion.set(0, 0, 0, 1);
-      ballBody.position.set(0, ballRadius + 1, 0);
-      ballBody.velocity.set(0, 0, 0);
-      ballBody.angularVelocity.set(0, 0, 0);
-      boost = 100;
-      jumpsRemaining = 2;
-    }
+    // --- 6. CONTROLS & MOVEMENT ---
+    const keys = {};
+    window.addEventListener('keydown', (e) => keys[e.key] = true);
+    window.addEventListener('keyup', (e) => keys[e.key] = false);
 
-    function isGrounded() {
-      return carBody.position.y <= 1.15 && Math.abs(carBody.velocity.y) < 3.5;
-    }
+    function handleInput() {
+      const speed = 15;
+      const turnSpeed = 2.0;
 
-    function handleJumpOrFlip() {
-      if (isGrounded()) {
-        jumpsRemaining = 1;
-        carBody.applyImpulse(new CANNON.Vec3(0, 7200, 0));
-      } else if (jumpsRemaining > 0) {
-        jumpsRemaining--;
-        const forward = new CANNON.Vec3(0, 0, -1);
-        carBody.quaternion.vmult(forward, forward);
-        const steerInput = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
-        const pitchInput = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
-        carBody.applyImpulse(new CANNON.Vec3(forward.x * 6500 * (pitchInput || 1), 2600, forward.z * 6500 * (pitchInput || 1)));
-        const worldTorque = carBody.quaternion.vmult(new CANNON.Vec3(-pitchInput * 9000, 0, steerInput * 7500));
-        carBody.applyTorque(worldTorque);
+      // Forward / Backward
+      if (keys['w'] || keys['ArrowUp']) {
+        carBody.velocity.x = -Math.sin(carBody.quaternion.y) * speed;
+        carBody.velocity.z = -Math.cos(carBody.quaternion.y) * speed;
       }
-    }
-
-    function stepCarPhysics(dt) {
-      const grounded = isGrounded();
-      if (grounded) jumpsRemaining = 2;
-
-      const boosting = keys['ShiftLeft'] || keys['ShiftRight'];
-      if (boosting && boost > 0) boost = Math.max(0, boost - 32 * dt);
-      else if (!boosting) boost = Math.min(100, boost + 12 * dt);
-
-      const q = new THREE.Quaternion(carBody.quaternion.x, carBody.quaternion.y, carBody.quaternion.z, carBody.quaternion.w);
-      const forward3 = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-      const right3 = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-      const flatForward = new THREE.Vector3(forward3.x, 0, forward3.z).normalize();
-      const flatRight = new THREE.Vector3(right3.x, 0, right3.z).normalize();
-
-      const vel3 = new THREE.Vector3(carBody.velocity.x, carBody.velocity.y, carBody.velocity.z);
-      const accel3 = vel3.clone().sub(prevVel).divideScalar(Math.max(dt, 0.001));
-      prevVel.copy(vel3);
-
-      const throttle = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
-      const steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
-      const airRoll = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
-
-      if (grounded) {
-        carBody.applyForce(new CANNON.Vec3(flatForward.x * throttle * 16500, 0, flatForward.z * throttle * 16500));
-
-        const aLong = accel3.dot(flatForward);
-        const aLat = accel3.dot(flatRight);
-        const longTransfer = (carMass * aLong * 0.65) / 2.7;
-        const latTransfer = (carMass * aLat * 0.65) / 2.4;
-
-        const latSpeed = vel3.dot(flatRight);
-        const gripStrength = Math.max(4.5, 9.5 + latTransfer * 0.0015);
-        const lateralCorrection = -latSpeed * gripStrength * carMass;
-        carBody.applyForce(new CANNON.Vec3(flatRight.x * lateralCorrection, 0, flatRight.z * lateralCorrection));
-
-        const fwdSpeed = vel3.dot(flatForward);
-        const speedFactor = Math.min(1, Math.abs(fwdSpeed) / 6) * (fwdSpeed >= -0.5 ? 1 : -1);
-        carBody.applyTorque(new CANNON.Vec3(0, steer * 7200 * speedFactor, 0));
-
-        chassisMesh.rotation.x = THREE.MathUtils.lerp(chassisMesh.rotation.x, THREE.MathUtils.clamp(-longTransfer * 0.00004, -0.09, 0.09), 10 * dt);
-        chassisMesh.rotation.z = THREE.MathUtils.lerp(chassisMesh.rotation.z, THREE.MathUtils.clamp(-latTransfer * 0.00005, -0.12, 0.12), 10 * dt);
-      } else {
-        const worldTorque = carBody.quaternion.vmult(new CANNON.Vec3(-throttle * 8200, steer * 6800, airRoll * 8500));
-        carBody.applyTorque(worldTorque);
-        chassisMesh.rotation.x = THREE.MathUtils.lerp(chassisMesh.rotation.x, 0, 8 * dt);
-        chassisMesh.rotation.z = THREE.MathUtils.lerp(chassisMesh.rotation.z, 0, 8 * dt);
+      if (keys['s'] || keys['ArrowDown']) {
+        carBody.velocity.x = Math.sin(carBody.quaternion.y) * (speed / 2);
+        carBody.velocity.z = Math.cos(carBody.quaternion.y) * (speed / 2);
       }
 
-      if (boosting && boost > 0) {
-        carBody.applyForce(new CANNON.Vec3(forward3.x * 22000, forward3.y * 22000, forward3.z * 22000));
-      }
-
-      document.getElementById('boostText').textContent = Math.round(boost);
-      document.getElementById('boostBar').style.width = `${boost}%`;
-      document.getElementById('telemetry').textContent =
-        `Mode: ${grounded ? 'Ground (Weight Transfer)' : 'Aerial'} · Speed: ${Math.round(vel3.length())} u/s`;
+      // Steering
+      if (keys['a'] || keys['ArrowLeft']) carBody.angularVelocity.y = turnSpeed;
+      else if (keys['d'] || keys['ArrowRight']) carBody.angularVelocity.y = -turnSpeed;
+      else carBody.angularVelocity.y = 0;
     }
 
-    let lastTime = performance.now();
-    function animate(now) {
+    // --- 7. GAME LOOP ---
+    let score = 0;
+
+    function animate() {
       requestAnimationFrame(animate);
-      const dt = Math.min((now - lastTime) / 1000, 0.05);
-      lastTime = now;
 
-      stepCarPhysics(dt);
-      world.step(1 / 60, dt, 3);
+      // Step Physics
+      world.step(1 / 60);
 
-      carGroup.position.set(carBody.position.x, carBody.position.y, carBody.position.z);
-      carGroup.quaternion.set(carBody.quaternion.x, carBody.quaternion.y, carBody.quaternion.z, carBody.quaternion.w);
+      // Sync Visuals with Physics
+      handleInput();
+      carMesh.position.copy(carBody.position);
+      carMesh.quaternion.copy(carBody.quaternion);
 
-      const steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
-      wheelMeshes[0].rotation.y = steer * 0.35;
-      wheelMeshes[1].rotation.y = steer * 0.35;
+      ballMesh.position.copy(ballBody.position);
+      ballMesh.quaternion.copy(ballBody.quaternion);
 
-      ballMesh.position.set(ballBody.position.x, ballBody.position.y, ballBody.position.z);
-      ballMesh.quaternion.set(ballBody.quaternion.x, ballBody.quaternion.y, ballBody.quaternion.z, ballBody.quaternion.w);
+      // Smooth Camera Chase
+      camera.position.x = carBody.position.x;
+      camera.position.y = carBody.position.y + 6;
+      camera.position.z = carBody.position.z + 12;
+      camera.lookAt(carBody.position);
 
-      const desiredCam = new THREE.Vector3(carBody.position.x, carBody.position.y + 7.5, carBody.position.z + 13.5);
-      camPos.lerp(desiredCam, 1 - Math.exp(-7 * dt));
-      camera.position.copy(camPos);
-      camera.lookAt(carBody.position.x, carBody.position.y + 1.5, carBody.position.z - 6);
+      // Check Goal Scored (Ball crosses z < -50)
+      if (ballBody.position.z < -50) {
+        score++;
+        document.getElementById('score').innerText = score;
+        ballBody.position.set(0, 5, 0);
+        ballBody.velocity.set(0, 0, 0);
+        ballBody.angularVelocity.set(0, 0, 0);
+      }
 
       renderer.render(scene, camera);
     }
-    requestAnimationFrame(animate);
 
+    // Handle Window Resize
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
+
+    animate();
   </script>
 </body>
 </html>
