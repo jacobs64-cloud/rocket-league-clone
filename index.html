@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Low Poly Car Soccer</title>
+<style>
+html,body{margin:0;overflow:hidden;background:#87ceeb}
+#info{position:fixed;top:10px;left:10px;color:white;font:16px Arial;
+background:#0008;padding:10px;border-radius:6px}
+</style>
+</head>
+<body>
+<div id="info">WASD: Drive/Steer | Space: Jump | C: Ball Cam</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+scene.fog=new THREE.Fog(0x87ceeb,35,100);
+
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,200);
+const renderer=new THREE.WebGLRenderer({antialias:false});
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.BasicShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const light=new THREE.HemisphereLight(0xffffff,0x557755,2);
+scene.add(light);
+
+const sun=new THREE.DirectionalLight(0xffffff,2);
+sun.position.set(10,25,10);
+sun.castShadow=true;
+scene.add(sun);
+
+const mat=(color)=>new THREE.MeshLambertMaterial({color});
+const fieldMat=mat(0x238b45);
+const wallMat=mat(0x34506b);
+
+function box(x,y,z,w,h,d,m){
+  const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
+  o.position.set(x,y,z); o.castShadow=true; o.receiveShadow=true;
+  scene.add(o); return o;
+}
+
+box(0,-.35,0,42,.5,26,fieldMat);
+box(0,1,-13,42,2,.5,wallMat);
+box(0,1,13,42,2,.5,wallMat);
+box(-21,1,0,.5,2,26,wallMat);
+box(21,1,0,.5,2,26,wallMat);
+
+// Goal frames
+box(-21,2.3,0,.5,4,8,mat(0xff3333));
+box(21,2.3,0,.5,4,8,mat(0x3333ff));
+
+const car=new THREE.Group();
+const body=box(0,0,0,2.1,.65,3.3,mat(0xff3333));
+body.position.set(0,.7,0);
+car.add(body);
+
+const roof=new THREE.Mesh(new THREE.BoxGeometry(1.5,.55,1.5),mat(0xdd2222));
+roof.position.set(0,1.25,-.2);
+roof.castShadow=true; car.add(roof);
+
+for(const x of[-1,1])for(const z of[-1,1]){
+  const w=new THREE.Mesh(new THREE.CylinderGeometry(.34,.34,.25,8),mat(0x222222));
+  w.rotation.z=Math.PI/2;
+  w.position.set(x*1.05,.38,z*1.05);
+  car.add(w);
+}
+car.position.set(0,0,7);
+scene.add(car);
+
+const ball=new THREE.Mesh(
+ new THREE.SphereGeometry(.75,12,8),mat(0xffffff)
+);
+ball.position.set(0,.8,0);
+ball.castShadow=true;
+scene.add(ball);
+
+const keys={};
+onkeydown=e=>{keys[e.key.toLowerCase()]=true};
+onkeyup=e=>{keys[e.key.toLowerCase()]=false};
+
+let velocity=new THREE.Vector3();
+let ballVelocity=new THREE.Vector3();
+let ballCam=true;
+onkeydown=e=>{keys[e.key.toLowerCase()]=true;if(e.key.toLowerCase()==='c')ballCam=!ballCam};
+
+const clock=new THREE.Clock();
+const forward=new THREE.Vector3();
+const desiredCam=new THREE.Vector3();
+const look=new THREE.Vector3();
+
+function physics(dt){
+  const throttle=(keys.w?1:0)-(keys.s?1:0);
+  const steer=(keys.a?1:0)-(keys.d?1:0);
+
+  car.rotation.y-=steer*dt*(2.2+velocity.length()*.15)*Math.sign(throttle||1);
+
+  forward.set(0,0,-1).applyQuaternion(car.quaternion);
+  velocity.addScaledVector(forward,throttle*dt*18);
+  velocity.multiplyScalar(Math.pow(.12,dt));
+  if(keys[' '])velocity.addScaledVector(forward,dt*8);
+
+  velocity.y-=18*dt;
+  car.position.addScaledVector(velocity,dt);
+
+  if(car.position.y<0){car.position.y=0;velocity.y=0}
+  car.position.x=THREE.MathUtils.clamp(car.position.x,-19.5,19.5);
+  car.position.z=THREE.MathUtils.clamp(car.position.z,-11.5,11.5);
+
+  // Ball movement
+  ballVelocity.y-=15*dt;
+  ball.position.addScaledVector(ballVelocity,dt);
+
+  if(ball.position.y<.75){
+    ball.position.y=.75;
+    ballVelocity.y=Math.abs(ballVelocity.y)*.55;
+  }
+
+  // Ball-wall bounces
+  if(Math.abs(ball.position.x)>20){
+    ball.position.x=Math.sign(ball.position.x)*20;
+    ballVelocity.x*=-.75;
+  }
+  if(Math.abs(ball.position.z)>12){
+    ball.position.z=Math.sign(ball.position.z)*12;
+    ballVelocity.z*=-.75;
+  }
+  ballVelocity.multiplyScalar(Math.pow(.35,dt));
+
+  // Car-ball collision
+  const hit=ball.position.clone().sub(car.position);
+  hit.y=0;
+  const distance=hit.length();
+  if(distance<2.1){
+    hit.normalize();
+    ballVelocity.addScaledVector(hit,18);
+    ballVelocity.y=Math.max(ballVelocity.y,4);
+    ball.position.addScaledVector(hit,2.1-distance);
+  }
+
+  // Reset ball if it enters either goal
+  if(Math.abs(ball.position.x)>21){
+    ball.position.set(0,.8,0);
+    ballVelocity.set(0,0,0);
+  }
+}
+
+function updateCamera(dt){
+  const target=car.position.clone();
+  target.y+=1;
+
+  if(ballCam){
+    look.copy(ball.position).lerp(target,.2);
+    desiredCam.copy(car.position);
+    desiredCam.y+=5;
+    desiredCam.addScaledVector(
+      new THREE.Vector3(0,0,1).applyQuaternion(car.quaternion),8
+    );
+  }else{
+    look.copy(target);
+    desiredCam.copy(car.position);
+    desiredCam.y+=4;
+    desiredCam.addScaledVector(
+      new THREE.Vector3(0,0,1).applyQuaternion(car.quaternion),7
+    );
+  }
+
+  camera.position.lerp(desiredCam,1-Math.pow(.001,dt));
+  camera.lookAt(look);
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),.033);
+  physics(dt);
+  updateCamera(dt);
+  renderer.render(scene,camera);
+}
+animate();
+
+onresize=()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+};
+</script>
+</body>
+</html>
