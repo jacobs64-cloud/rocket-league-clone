@@ -2,18 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Car Soccer</title>
+  <title>Rocket League Clone</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background-color: #121212;
-      color: #ffffff;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #111622;
+      color: #fff;
+      font-family: system-ui, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -21,326 +16,341 @@
       height: 100vh;
       overflow: hidden;
     }
-    #scoreboard {
+    #hud {
+      width: 960px;
       display: flex;
-      gap: 40px;
-      font-size: 2rem;
-      font-weight: bold;
-      margin-bottom: 10px;
-      background: #1e1e1e;
-      padding: 10px 30px;
-      border-radius: 12px;
-      border: 2px solid #333;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 18px;
+      font-weight: 700;
     }
-    .p1-score { color: #3b82f6; }
-    .p2-score { color: #ef4444; }
+    .blue { color: #38bdf8; }
+    .orange { color: #fb923c; }
     canvas {
-      background-color: #2e7d32;
-      border: 4px solid #ffffff;
+      background: #1e293b;
+      border: 3px solid #475569;
       border-radius: 8px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.5);
     }
     #controls {
-      margin-top: 12px;
-      display: flex;
-      gap: 40px;
-      font-size: 0.9rem;
-      color: #aaa;
-    }
-    span.key {
-      background: #333;
-      color: #fff;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-family: monospace;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #94a3b8;
     }
   </style>
 </head>
 <body>
-
-  <div id="scoreboard">
-    <div class="p1-score">BLUE: <span id="score1">0</span></div>
-    <div id="status">FIRST TO 5</div>
-    <div class="p2-score">RED: <span id="score2">0</span></div>
+  <div id="hud">
+    <div class="blue">BLUE: <span id="blueScore">0</span></div>
+    <div>BOOST: <span id="boostVal">100</span></div>
+    <div class="orange">ORANGE: <span id="orangeScore">0</span></div>
   </div>
-
-  <canvas id="gameCanvas" width="900" height="500"></canvas>
-
+  <canvas id="game" width="960" height="580"></canvas>
   <div id="controls">
-    <div><strong>Blue Car:</strong> <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> + <span class="key">Space</span> (Boost)</div>
-    <div><strong>Red Car:</strong> <span class="key">↑</span><span class="key">←</span><span class="key">↓</span><span class="key">→</span> + <span class="key">Shift</span> (Boost)</div>
-    <div><span class="key">R</span> Reset Match</div>
+    WASD / Arrows: Drive & Steer | Shift: Boost | Space: Jump / Flip | R: Reset Ball
   </div>
 
   <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const score1El = document.getElementById('score1');
-    const score2El = document.getElementById('score2');
-    const statusEl = document.getElementById('status');
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const blueScoreEl = document.getElementById("blueScore");
+    const orangeScoreEl = document.getElementById("orangeScore");
+    const boostValEl = document.getElementById("boostVal");
 
-    const GOAL_WIDTH = 140;
-    const GOAL_TOP = (canvas.height - GOAL_WIDTH) / 2;
-    const GOAL_BOTTOM = GOAL_TOP + GOAL_WIDTH;
-    const WIN_SCORE = 5;
+    const W = canvas.width;
+    const H = canvas.height;
+    const GOAL_W = 24;
+    const GOAL_H = 160;
+    const GOAL_TOP = (H - GOAL_H) / 2;
+    const GOAL_BOT = (H + GOAL_H) / 2;
 
-    let score1 = 0;
-    let score2 = 0;
-    let gameOver = false;
-    let goalMessageTimer = 0;
-
+    let blueScore = 0;
+    let orangeScore = 0;
     const keys = {};
-    window.addEventListener('keydown', (e) => {
+
+    window.addEventListener("keydown", (e) => {
       keys[e.code] = true;
-      if (e.code === 'KeyR') resetMatch();
+      if (e.code === "Space") {
+        e.preventDefault();
+        triggerJumpOrFlip();
+      }
+      if (e.code === "KeyR") {
+        resetPositions();
+      }
     });
-    window.addEventListener('keyup', (e) => (keys[e.code] = false));
+    window.addEventListener("keyup", (e) => (keys[e.code] = false));
 
-    class Car {
-      constructor(x, y, angle, color, controls) {
-        this.startX = x;
-        this.startY = y;
-        this.startAngle = angle;
-        this.color = color;
-        this.controls = controls;
-        this.width = 40;
-        this.height = 24;
-        this.radius = 18;
-        this.reset();
-      }
-
-      reset() {
-        this.x = this.startX;
-        this.y = this.startY;
-        this.angle = this.startAngle;
-        this.speed = 0;
-        this.vx = 0;
-        this.vy = 0;
-        this.boost = 100;
-      }
-
-      update() {
-        const isBoosting = keys[this.controls.boost] && this.boost > 0;
-        const accel = isBoosting ? 0.45 : 0.25;
-        const maxSpeed = isBoosting ? 8.5 : 5.5;
-
-        if (isBoosting) {
-          this.boost = Math.max(0, this.boost - 1.2);
-        } else {
-          this.boost = Math.min(100, this.boost + 0.3);
-        }
-
-        if (keys[this.controls.up]) this.speed += accel;
-        if (keys[this.controls.down]) this.speed -= accel * 0.7;
-
-        // Friction
-        this.speed *= 0.95;
-        if (this.speed > maxSpeed) this.speed = maxSpeed;
-        if (this.speed < -maxSpeed * 0.6) this.speed = -maxSpeed * 0.6;
-
-        // Turning (only when moving)
-        if (Math.abs(this.speed) > 0.2) {
-          const turnDir = this.speed >= 0 ? 1 : -1;
-          if (keys[this.controls.left]) this.angle -= 0.065 * turnDir;
-          if (keys[this.controls.right]) this.angle += 0.065 * turnDir;
-        }
-
-        this.vx = Math.cos(this.angle) * this.speed;
-        this.vy = Math.sin(this.angle) * this.speed;
-
-        this.x += this.vx;
-        this.y += this.vy;
-
-        // Arena boundaries
-        if (this.x < this.radius) { this.x = this.radius; this.speed *= -0.5; }
-        if (this.x > canvas.width - this.radius) { this.x = canvas.width - this.radius; this.speed *= -0.5; }
-        if (this.y < this.radius) { this.y = this.radius; this.speed *= -0.5; }
-        if (this.y > canvas.height - this.radius) { this.y = canvas.height - this.radius; this.speed *= -0.5; }
-      }
-
-      draw() {
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.angle);
-
-        // Boost flame
-        if (keys[this.controls.boost] && this.boost > 0) {
-          ctx.fillStyle = '#f59e0b';
-          ctx.beginPath();
-          ctx.moveTo(-this.width / 2, -6);
-          ctx.lineTo(-this.width / 2 - 14 - Math.random() * 8, 0);
-          ctx.lineTo(-this.width / 2, 6);
-          ctx.fill();
-        }
-
-        // Car body
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.roundRect(-this.width / 2, -this.height / 2, this.width, this.height, 5);
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = '#111';
-        ctx.stroke();
-
-        // Windshield
-        ctx.fillStyle = '#bae6fd';
-        ctx.fillRect(4, -this.height / 2 + 4, 10, this.height - 8);
-
-        ctx.restore();
-
-        // Boost bar under car
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(this.x - 20, this.y + 22, 40, 4);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(this.x - 20, this.y + 22, (this.boost / 100) * 40, 4);
-      }
-    }
-
-    const ball = {
-      x: canvas.width / 2,
-      y: canvas.height / 2,
+    const car = {
+      x: 220,
+      y: H / 2,
       vx: 0,
       vy: 0,
-      radius: 22,
-      reset() {
-        this.x = canvas.width / 2;
-        this.y = canvas.height / 2;
-        this.vx = 0;
-        this.vy = 0;
-      },
-      update() {
-        this.x += this.vx;
-        this.y += this.vy;
-
-        // Air resistance
-        this.vx *= 0.985;
-        this.vy *= 0.985;
-
-        // Top & bottom wall bounce
-        if (this.y - this.radius < 0) {
-          this.y = this.radius;
-          this.vy *= -0.8;
-        }
-        if (this.y + this.radius > canvas.height) {
-          this.y = canvas.height - this.radius;
-          this.vy *= -0.8;
-        }
-
-        // Left & right walls (excluding goals)
-        const inGoalY = this.y > GOAL_TOP && this.y < GOAL_BOTTOM;
-
-        if (!inGoalY) {
-          if (this.x - this.radius < 0) {
-            this.x = this.radius;
-            this.vx *= -0.8;
-          }
-          if (this.x + this.radius > canvas.width) {
-            this.x = canvas.width - this.radius;
-            this.vx *= -0.8;
-          }
-        } else {
-          // Check Goal Scored
-          if (this.x + this.radius < 0) {
-            handleGoal(2);
-          } else if (this.x - this.radius > canvas.width) {
-            handleGoal(1);
-          }
-        }
-      },
-      draw() {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = '#222';
-        ctx.stroke();
-
-        // Soccer pentagon pattern
-        ctx.fillStyle = '#222';
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
+      angle: 0,
+      radius: 20,
+      boost: 100,
+      z: 0,
+      vz: 0,
+      flipTimer: 0,
+      flipAngle: 0
     };
 
-    const car1 = new Car(150, canvas.height / 2, 0, '#3b82f6', {
-      up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', boost: 'Space'
-    });
+    const ball = {
+      x: W / 2,
+      y: H / 2,
+      vx: 0,
+      vy: 0,
+      radius: 22
+    };
 
-    const car2 = new Car(canvas.width - 150, canvas.height / 2, Math.PI, '#ef4444', {
-      up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', boost: 'ShiftRight'
-    });
+    const pads = [
+      { x: 160, y: 110, active: true, timer: 0 },
+      { x: 160, y: H - 110, active: true, timer: 0 },
+      { x: W / 2, y: 90, active: true, timer: 0 },
+      { x: W / 2, y: H - 90, active: true, timer: 0 },
+      { x: W - 160, y: 110, active: true, timer: 0 },
+      { x: W - 160, y: H - 110, active: true, timer: 0 }
+    ];
 
-    function checkCarBallCollision(car) {
-      const dx = ball.x - car.x;
-      const dy = ball.y - car.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = car.radius + ball.radius;
-
-      if (dist < minDist && dist > 0) {
-        const nx = dx / dist;
-        const ny = dy / dist;
-
-        // Separate ball from car
-        const overlap = minDist - dist;
-        ball.x += nx * overlap;
-        ball.y += ny * overlap;
-
-        // Transfer momentum
-        const impactForce = Math.hypot(car.vx, car.vy) * 1.4 + 2.5;
-        ball.vx = nx * impactForce + car.vx * 0.4;
-        ball.vy = ny * impactForce + car.vy * 0.4;
-      }
-    }
-
-    function checkCarCarCollision() {
-      const dx = car2.x - car1.x;
-      const dy = car2.y - car1.y;
-      const dist = Math.hypot(dx, dy);
-      const minDist = car1.radius + car2.radius;
-
-      if (dist < minDist && dist > 0) {
-        const nx = dx / dist;
-        const ny = dy / dist;
-        const overlap = (minDist - dist) / 2;
-
-        car1.x -= nx * overlap;
-        car1.y -= ny * overlap;
-        car2.x += nx * overlap;
-        car2.y += ny * overlap;
-
-        car1.speed *= 0.6;
-        car2.speed *= 0.6;
-      }
-    }
-
-    function handleGoal(scoringPlayer) {
-      if (gameOver) return;
-
-      if (scoringPlayer === 1) {
-        score1++;
-        score1El.textContent = score1;
-        statusEl.textContent = 'BLUE SCORES!';
-      } else {
-        score2++;
-        score2El.textContent = score2;
-        statusEl.textContent = 'RED SCORES!';
-      }
-
-      if (score1 >= WIN_SCORE || score2 >= WIN_SCORE) {
-        gameOver = true;
-        statusEl.textContent = score1 >= WIN_SCORE ? 'BLUE WINS! (Press R)' : 'RED WINS! (Press R)';
-      } else {
-        goalMessageTimer = 90;
-        resetPositions();
+    function triggerJumpOrFlip() {
+      if (car.z <= 0.1) {
+        car.vz = 5.5;
+      } else if (car.flipTimer <= 0) {
+        car.flipTimer = 0.35;
+        car.vx += Math.cos(car.angle) * 5.5;
+        car.vy += Math.sin(car.angle) * 5.5;
       }
     }
 
     function resetPositions() {
-      car1.reset();
-      car2.reset();
-      ball.reset();
+      car.x = 220;
+      car.y = H / 2;
+      car.vx = 0;
+      car.vy = 0;
+      car.angle = 0;
+      car.z = 0;
+      car.vz = 0;
+      car.boost = 100;
+
+      ball.x = W / 2;
+      ball.y = H / 2;
+      ball.vx = (Math.random() > 0.5 ? 1 : -1) * 2.5;
+      ball.vy = (Math.random() - 0.5) * 4;
+    }
+
+    function update(dt) {
+      const up = keys["KeyW"] || keys["ArrowUp"];
+      const down = keys["KeyS"] || keys["ArrowDown"];
+      const left = keys["KeyA"] || keys["ArrowLeft"];
+      const right = keys["KeyD"] || keys["ArrowRight"];
+      const boosting = (keys["ShiftLeft"] || keys["ShiftRight"]) && car.boost > 0;
+
+      const speedFactor = Math.hypot(car.vx, car.vy) > 0.4 ? 1 : 0.65;
+      const turnRate = 3.6 * speedFactor;
+      if (left) car.angle -= turnRate * dt;
+      if (right) car.angle += turnRate * dt;
+
+      let accel = 0;
+      if (up) accel += 420;
+      if (down) accel -= 320;
+      if (boosting) {
+        accel += 520;
+        car.boost = Math.max(0, car.boost - 38 * dt);
+      }
+
+      car.vx += Math.cos(car.angle) * accel * dt;
+      car.vy += Math.sin(car.angle) * accel * dt;
+
+      // Air / jump physics
+      if (car.z > 0 || car.vz > 0) {
+        car.z += car.vz * 45 * dt;
+        car.vz -= 16 * dt;
+        if (car.z <= 0) {
+          car.z = 0;
+          car.vz = 0;
+        }
+      }
+      if (car.flipTimer > 0) {
+        car.flipTimer -= dt;
+        car.flipAngle += 18 * dt;
+      } else {
+        car.flipAngle = 0;
+      }
+
+      // Drag
+      const drag = car.z > 0 ? 0.992 : 0.965;
+      car.vx *= Math.pow(drag, dt * 60);
+      car.vy *= Math.pow(drag, dt * 60);
+
+      car.x += car.vx * dt * 60;
+      car.y += car.vy * dt * 60;
+
+      // Arena walls for car
+      if (car.x - car.radius < 0) { car.x = car.radius; car.vx *= -0.4; }
+      if (car.x + car.radius > W) { car.x = W - car.radius; car.vx *= -0.4; }
+      if (car.y - car.radius < 0) { car.y = car.radius; car.vy *= -0.4; }
+      if (car.y + car.radius > H) { car.y = H - car.radius; car.vy *= -0.4; }
+
+      // Boost pads
+      for (const pad of pads) {
+        if (!pad.active) {
+          pad.timer -= dt;
+          if (pad.timer <= 0) pad.active = true;
+        } else if (Math.hypot(car.x - pad.x, car.y - pad.y) < car.radius + 12) {
+          car.boost = Math.min(100, car.boost + 35);
+          pad.active = false;
+          pad.timer = 5;
+        }
+      }
+
+      // Ball movement
+      ball.vx *= Math.pow(0.99, dt * 60);
+      ball.vy *= Math.pow(0.99, dt * 60);
+      ball.x += ball.vx * dt * 60;
+      ball.y += ball.vy * dt * 60;
+
+      // Top & bottom walls
+      if (ball.y - ball.radius < 0) {
+        ball.y = ball.radius;
+        ball.vy = -ball.vy * 0.85;
+      }
+      if (ball.y + ball.radius > H) {
+        ball.y = H - ball.radius;
+        ball.vy = -ball.vy * 0.85;
+      }
+
+      // Left & right walls + goals
+      const inGoalY = ball.y > GOAL_TOP && ball.y < GOAL_BOT;
+      if (ball.x - ball.radius < 0) {
+        if (inGoalY && ball.x < -GOAL_W * 0.4) {
+          orangeScore++;
+          orangeScoreEl.textContent = orangeScore;
+          resetPositions();
+          return;
+        } else if (!inGoalY) {
+          ball.x = ball.radius;
+          ball.vx = -ball.vx * 0.85;
+        }
+      }
+      if (ball.x + ball.radius > W) {
+        if (inGoalY && ball.x > W + GOAL_W * 0.4) {
+          blueScore++;
+          blueScoreEl.textContent = blueScore;
+          resetPositions();
+          return;
+        } else if (!inGoalY) {
+          ball.x = W - ball.radius;
+          ball.vx = -ball.vx * 0.85;
+        }
+      }
+
+      // Car-to-ball collision
+      const dx = ball.x - car.x;
+      const dy = ball.y - car.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = car.radius + ball.radius;
+      if (dist < minDist && dist > 0) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const overlap = minDist - dist;
+        ball.x += nx * overlap * 0.75;
+        ball.y += ny * overlap * 0.75;
+        car.x -= nx * overlap * 0.25;
+        car.y -= ny * overlap * 0.25;
+
+        const relVx = car.vx - ball.vx;
+        const relVy = car.vy - ball.vy;
+        const impact = Math.max(4, (relVx * nx + relVy * ny) * 1.25 + (boosting ? 3.5 : 1));
+        ball.vx = nx * impact + car.vx * 0.3;
+        ball.vy = ny * impact + car.vy * 0.3;
+      }
+
+      boostValEl.textContent = Math.round(car.boost);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // Pitch markings
+      ctx.strokeStyle = "rgba(255,255,255,0.14)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(W / 2, 0);
+      ctx.lineTo(W / 2, H);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(W / 2, H / 2, 75, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Goals
+      ctx.fillStyle = "rgba(56, 189, 248, 0.22)";
+      ctx.fillRect(0, GOAL_TOP, GOAL_W, GOAL_H);
+      ctx.strokeStyle = "#38bdf8";
+      ctx.strokeRect(0, GOAL_TOP, GOAL_W, GOAL_H);
+
+      ctx.fillStyle = "rgba(251, 146, 60, 0.22)";
+      ctx.fillRect(W - GOAL_W, GOAL_TOP, GOAL_W, GOAL_H);
+      ctx.strokeStyle = "#fb923c";
+      ctx.strokeRect(W - GOAL_W, GOAL_TOP, GOAL_W, GOAL_H);
+
+      // Boost pads
+      for (const pad of pads) {
+        ctx.beginPath();
+        ctx.arc(pad.x, pad.y, 11, 0, Math.PI * 2);
+        ctx.fillStyle = pad.active ? "#facc15" : "rgba(250, 204, 21, 0.15)";
+        ctx.fill();
+      }
+
+      // Ball
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#f8fafc";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#0f172a";
+      ctx.stroke();
+
+      // Car shadow & body (scaled slightly by height z)
+      const scale = 1 + car.z * 0.015;
+      ctx.save();
+      ctx.translate(car.x, car.y - car.z * 0.5);
+      ctx.rotate(car.angle);
+      ctx.scale(scale, scale);
+
+      if ((keys["ShiftLeft"] || keys["ShiftRight"]) && car.boost > 0) {
+        ctx.fillStyle = "#f97316";
+        ctx.beginPath();
+        ctx.moveTo(-20, -7);
+        ctx.lineTo(-34 - Math.random() * 10, 0);
+        ctx.lineTo(-20, 7);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.fillStyle = "#38bdf8";
+      ctx.fillRect(-18, -11, 36, 22);
+      ctx.fillStyle = "#e0f2fe";
+      ctx.fillRect(-4, -8, 12, 16);
+
+      // Nose indicator
+      ctx.fillStyle = "#0284c7";
+      ctx.fillRect(14, -10, 5, 20);
+      ctx.restore();
+    }
+
+    let lastTime = performance.now();
+    function loop(now) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    resetPositions();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
 
