@@ -2,22 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>3D Rocket Arena — Weight Transfer & Aerial Physics</title>
+  <title>3D Rocket Arena — Fixed Imports</title>
   <style>
     body { margin: 0; overflow: hidden; background: #0d1117; font-family: system-ui, sans-serif; color: #e6edf3; }
     #hud {
-      position: fixed; top: 16px; left: 16px; background: rgba(13, 17, 23, 0.78);
+      position: fixed; top: 16px; left: 16px; z-index: 10; background: rgba(13, 17, 23, 0.78);
       border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 16px;
       font-size: 13px; line-height: 1.5; pointer-events: none; backdrop-filter: blur(6px);
     }
+    #errBox {
+      display: none; position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 20;
+      background: rgba(127, 29, 29, 0.92); border: 1px solid #f87171; color: #fef2f2;
+      padding: 12px 16px; border-radius: 8px; font-family: monospace; font-size: 12px; white-space: pre-wrap;
+    }
     .bar { width: 180px; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin-top: 4px; }
-    .fill { height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #ef4444); transition: width 0.05s; }
+    .fill { height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #ef4444); }
   </style>
+  <script>
+    function showErr(msg) {
+      const box = document.getElementById('errBox');
+      if (box) { box.style.display = 'block'; box.textContent += msg + '\n'; }
+    }
+    window.addEventListener('error', (e) => showErr('Error: ' + e.message + ' (' + e.filename + ':' + e.lineno + ')'));
+    window.addEventListener('unhandledrejection', (e) => showErr('Promise Rejection: ' + (e.reason?.message || e.reason)));
+  </script>
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
-        "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+        "three": "https://esm.sh/three@0.169.0",
+        "cannon-es": "https://esm.sh/cannon-es@0.20.0"
       }
     }
   </script>
@@ -31,12 +44,12 @@
     <div class="bar"><div id="boostBar" class="fill"></div></div>
     <div id="telemetry" style="margin-top:6px; color:#8b949e;">Mode: Ground</div>
   </div>
+  <div id="errBox"></div>
 
   <script type="module">
     import * as THREE from 'three';
     import * as CANNON from 'cannon-es';
 
-    // --- Scene, Camera, Renderer ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1117);
     scene.fog = new THREE.FogExp2(0x0d1117, 0.006);
@@ -49,42 +62,26 @@
     renderer.toneMappingExposure = 1.15;
     document.body.appendChild(renderer.domElement);
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0x8899bb, 0.8));
+    scene.add(new THREE.AmbientLight(0x99aacc, 0.9));
     const dirLight = new THREE.DirectionalLight(0xffffff, 2.2);
     dirLight.position.set(25, 45, 20);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
-    dirLight.shadow.camera.near = 5;
-    dirLight.shadow.camera.far = 140;
-    const d = 55;
-    dirLight.shadow.camera.left = -d; dirLight.shadow.camera.right = d;
-    dirLight.shadow.camera.top = d; dirLight.shadow.camera.bottom = -d;
     scene.add(dirLight);
 
-    // --- Physics World ---
     const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
-    world.broadphase = new CANNON.SAPBroadphase(world);
 
     const groundMat = new CANNON.Material('ground');
     const carMat = new CANNON.Material('car');
     const ballMat = new CANNON.Material('ball');
 
-    world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, {
-      friction: 0.15, restitution: 0.1
-    }));
-    world.addContactMaterial(new CANNON.ContactMaterial(groundMat, ballMat, {
-      friction: 0.4, restitution: 0.72
-    }));
-    world.addContactMaterial(new CANNON.ContactMaterial(carMat, ballMat, {
-      friction: 0.2, restitution: 0.85
-    }));
+    world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, { friction: 0.15, restitution: 0.1 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(groundMat, ballMat, { friction: 0.4, restitution: 0.72 }));
+    world.addContactMaterial(new CANNON.ContactMaterial(carMat, ballMat, { friction: 0.2, restitution: 0.85 }));
 
-    // --- Arena (Floor + Walls) ---
     const arenaW = 60, arenaL = 90, wallH = 14;
     const floorBody = new CANNON.Body({ mass: 0, material: groundMat });
-    floorBody.addShape(new CANNON.Plane());
-    floorBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    floorBody.addShape(new CANNON.Box(new CANNON.Vec3(arenaW / 2, 0.5, arenaL / 2)));
+    floorBody.position.set(0, -0.5, 0);
     world.addBody(floorBody);
 
     const floorMesh = new THREE.Mesh(
@@ -118,16 +115,9 @@
     addWall(-arenaW / 2, wallH / 2, 0, 1, wallH, arenaL);
     addWall(arenaW / 2, wallH / 2, 0, 1, wallH, arenaL);
 
-    // --- Car Setup ---
     const carMass = 1000;
-    const carBody = new CANNON.Body({
-      mass: carMass,
-      material: carMat,
-      linearDamping: 0.05,
-      angularDamping: 0.35
-    });
-    const halfExtents = new CANNON.Vec3(1.15, 0.45, 2.1);
-    carBody.addShape(new CANNON.Box(halfExtents));
+    const carBody = new CANNON.Body({ mass: carMass, material: carMat, linearDamping: 0.05, angularDamping: 0.35 });
+    carBody.addShape(new CANNON.Box(new CANNON.Vec3(1.15, 0.45, 2.1)));
     carBody.position.set(0, 1.5, 22);
     world.addBody(carBody);
 
@@ -146,15 +136,8 @@
     cabinMesh.position.set(0, 0.65, -0.2);
     carGroup.add(cabinMesh);
 
-    // Visual wheels
     const wheelMeshes = [];
-    const wheelOffsets = [
-      [-1.2, -0.35, 1.35],
-      [ 1.2, -0.35, 1.35],
-      [-1.2, -0.35, -1.35],
-      [ 1.2, -0.35, -1.35]
-    ];
-    for (const [wx, wy, wz] of wheelOffsets) {
+    for (const [wx, wy, wz] of [[-1.2, -0.35, 1.35], [1.2, -0.35, 1.35], [-1.2, -0.35, -1.35], [1.2, -0.35, -1.35]]) {
       const wMesh = new THREE.Mesh(
         new THREE.CylinderGeometry(0.45, 0.45, 0.35, 16),
         new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 })
@@ -166,14 +149,8 @@
     }
     scene.add(carGroup);
 
-    // --- Ball Setup ---
     const ballRadius = 2.2;
-    const ballBody = new CANNON.Body({
-      mass: 220,
-      material: ballMat,
-      linearDamping: 0.04,
-      angularDamping: 0.08
-    });
+    const ballBody = new CANNON.Body({ mass: 220, material: ballMat, linearDamping: 0.04, angularDamping: 0.08 });
     ballBody.addShape(new CANNON.Sphere(ballRadius));
     ballBody.position.set(0, ballRadius + 1, 0);
     world.addBody(ballBody);
@@ -185,7 +162,6 @@
     ballMesh.castShadow = true;
     scene.add(ballMesh);
 
-    // --- Input & Car State ---
     const keys = {};
     window.addEventListener('keydown', (e) => {
       keys[e.code] = true;
@@ -196,7 +172,7 @@
 
     let boost = 100;
     let jumpsRemaining = 2;
-    let prevVel = new THREE.Vector3();
+    const prevVel = new THREE.Vector3();
     const camPos = new THREE.Vector3(0, 10, 35);
 
     function resetPositions() {
@@ -204,7 +180,6 @@
       carBody.velocity.set(0, 0, 0);
       carBody.angularVelocity.set(0, 0, 0);
       carBody.quaternion.set(0, 0, 0, 1);
-
       ballBody.position.set(0, ballRadius + 1, 0);
       ballBody.velocity.set(0, 0, 0);
       ballBody.angularVelocity.set(0, 0, 0);
@@ -213,13 +188,12 @@
     }
 
     function isGrounded() {
-      return carBody.position.y <= 1.05 && Math.abs(carBody.velocity.y) < 3.5;
+      return carBody.position.y <= 1.15 && Math.abs(carBody.velocity.y) < 3.5;
     }
 
     function handleJumpOrFlip() {
-      const grounded = isGrounded();
-      if (grounded) {
-        jumpsRemaining = 1; // 1 mid-air flip/jump after ground jump
+      if (isGrounded()) {
+        jumpsRemaining = 1;
         carBody.applyImpulse(new CANNON.Vec3(0, 7200, 0));
       } else if (jumpsRemaining > 0) {
         jumpsRemaining--;
@@ -227,17 +201,8 @@
         carBody.quaternion.vmult(forward, forward);
         const steerInput = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
         const pitchInput = (keys['KeyW'] ? 1 : 0) - (keys['KeyS'] ? 1 : 0);
-
-        const impulse = new CANNON.Vec3(
-          forward.x * 6500 * (pitchInput || 1),
-          2600,
-          forward.z * 6500 * (pitchInput || 1)
-        );
-        carBody.applyImpulse(impulse);
-
-        // Apply flip torque in local frame
-        const localTorque = new CANNON.Vec3(-pitchInput * 9000, 0, steerInput * 7500);
-        const worldTorque = carBody.quaternion.vmult(localTorque);
+        carBody.applyImpulse(new CANNON.Vec3(forward.x * 6500 * (pitchInput || 1), 2600, forward.z * 6500 * (pitchInput || 1)));
+        const worldTorque = carBody.quaternion.vmult(new CANNON.Vec3(-pitchInput * 9000, 0, steerInput * 7500));
         carBody.applyTorque(worldTorque);
       }
     }
@@ -246,20 +211,13 @@
       const grounded = isGrounded();
       if (grounded) jumpsRemaining = 2;
 
-      // Boost recharge slowly when not boosting
       const boosting = keys['ShiftLeft'] || keys['ShiftRight'];
-      if (boosting && boost > 0) {
-        boost = Math.max(0, boost - 32 * dt);
-      } else if (!boosting) {
-        boost = Math.min(100, boost + 12 * dt);
-      }
+      if (boosting && boost > 0) boost = Math.max(0, boost - 32 * dt);
+      else if (!boosting) boost = Math.min(100, boost + 12 * dt);
 
       const q = new THREE.Quaternion(carBody.quaternion.x, carBody.quaternion.y, carBody.quaternion.z, carBody.quaternion.w);
       const forward3 = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
       const right3 = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-      const up3 = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-
-      // Horizontal plane forward & right for driving
       const flatForward = new THREE.Vector3(forward3.x, 0, forward3.z).normalize();
       const flatRight = new THREE.Vector3(right3.x, 0, right3.z).normalize();
 
@@ -272,58 +230,41 @@
       const airRoll = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
 
       if (grounded) {
-        // Drive force
-        const driveForce = throttle * 16500;
-        carBody.applyForce(new CANNON.Vec3(flatForward.x * driveForce, 0, flatForward.z * driveForce));
+        carBody.applyForce(new CANNON.Vec3(flatForward.x * throttle * 16500, 0, flatForward.z * throttle * 16500));
 
-        // Weight transfer calculation (longitudinal & lateral)
-        const cgHeight = 0.65, wheelbase = 2.7, track = 2.4;
         const aLong = accel3.dot(flatForward);
         const aLat = accel3.dot(flatRight);
-        const longTransfer = (carMass * aLong * cgHeight) / wheelbase;
-        const latTransfer = (carMass * aLat * cgHeight) / track;
+        const longTransfer = (carMass * aLong * 0.65) / 2.7;
+        const latTransfer = (carMass * aLat * 0.65) / 2.4;
 
-        // Lateral grip scales slightly with weight transfer & speed
         const latSpeed = vel3.dot(flatRight);
         const gripStrength = Math.max(4.5, 9.5 + latTransfer * 0.0015);
         const lateralCorrection = -latSpeed * gripStrength * carMass;
         carBody.applyForce(new CANNON.Vec3(flatRight.x * lateralCorrection, 0, flatRight.z * lateralCorrection));
 
-        // Steering yaw torque (more responsive when moving)
         const fwdSpeed = vel3.dot(flatForward);
         const speedFactor = Math.min(1, Math.abs(fwdSpeed) / 6) * (fwdSpeed >= -0.5 ? 1 : -1);
         carBody.applyTorque(new CANNON.Vec3(0, steer * 7200 * speedFactor, 0));
 
-        // Subtle pitch/roll visual tilt from weight transfer
-        const targetPitch = THREE.MathUtils.clamp(-longTransfer * 0.00004, -0.09, 0.09);
-        const targetRoll = THREE.MathUtils.clamp(-latTransfer * 0.00005, -0.12, 0.12);
-        chassisMesh.rotation.x = THREE.MathUtils.lerp(chassisMesh.rotation.x, targetPitch, 10 * dt);
-        chassisMesh.rotation.z = THREE.MathUtils.lerp(chassisMesh.rotation.z, targetRoll, 10 * dt);
+        chassisMesh.rotation.x = THREE.MathUtils.lerp(chassisMesh.rotation.x, THREE.MathUtils.clamp(-longTransfer * 0.00004, -0.09, 0.09), 10 * dt);
+        chassisMesh.rotation.z = THREE.MathUtils.lerp(chassisMesh.rotation.z, THREE.MathUtils.clamp(-latTransfer * 0.00005, -0.12, 0.12), 10 * dt);
       } else {
-        // Aerial physics: pitch, yaw, roll torques + boost thrust
-        const pitchInput = throttle; // W pitches nose down, S pitches nose up
-        const localTorque = new CANNON.Vec3(-pitchInput * 8200, steer * 6800, airRoll * 8500);
-        const worldTorque = carBody.quaternion.vmult(new CANNON.Vec3(localTorque.x, localTorque.y, localTorque.z));
+        const worldTorque = carBody.quaternion.vmult(new CANNON.Vec3(-throttle * 8200, steer * 6800, airRoll * 8500));
         carBody.applyTorque(worldTorque);
-
         chassisMesh.rotation.x = THREE.MathUtils.lerp(chassisMesh.rotation.x, 0, 8 * dt);
         chassisMesh.rotation.z = THREE.MathUtils.lerp(chassisMesh.rotation.z, 0, 8 * dt);
       }
 
-      // Boost thrust along car's actual forward vector (works on ground and in air)
       if (boosting && boost > 0) {
-        const boostForce = 22000;
-        carBody.applyForce(new CANNON.Vec3(forward3.x * boostForce, forward3.y * boostForce, forward3.z * boostForce));
+        carBody.applyForce(new CANNON.Vec3(forward3.x * 22000, forward3.y * 22000, forward3.z * 22000));
       }
 
-      // Update HUD
       document.getElementById('boostText').textContent = Math.round(boost);
       document.getElementById('boostBar').style.width = `${boost}%`;
       document.getElementById('telemetry').textContent =
         `Mode: ${grounded ? 'Ground (Weight Transfer)' : 'Aerial'} · Speed: ${Math.round(vel3.length())} u/s`;
     }
 
-    // --- Main Loop ---
     let lastTime = performance.now();
     function animate(now) {
       requestAnimationFrame(animate);
@@ -333,25 +274,17 @@
       stepCarPhysics(dt);
       world.step(1 / 60, dt, 3);
 
-      // Sync car mesh
       carGroup.position.set(carBody.position.x, carBody.position.y, carBody.position.z);
       carGroup.quaternion.set(carBody.quaternion.x, carBody.quaternion.y, carBody.quaternion.z, carBody.quaternion.w);
 
-      // Spin front wheels visually
       const steer = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
       wheelMeshes[0].rotation.y = steer * 0.35;
       wheelMeshes[1].rotation.y = steer * 0.35;
 
-      // Sync ball mesh
       ballMesh.position.set(ballBody.position.x, ballBody.position.y, ballBody.position.z);
       ballMesh.quaternion.set(ballBody.quaternion.x, ballBody.quaternion.y, ballBody.quaternion.z, ballBody.quaternion.w);
 
-      // Smooth chase camera
-      const desiredCam = new THREE.Vector3(
-        carBody.position.x,
-        carBody.position.y + 7.5,
-        carBody.position.z + 13.5
-      );
+      const desiredCam = new THREE.Vector3(carBody.position.x, carBody.position.y + 7.5, carBody.position.z + 13.5);
       camPos.lerp(desiredCam, 1 - Math.exp(-7 * dt));
       camera.position.copy(camPos);
       camera.lookAt(carBody.position.x, carBody.position.y + 1.5, carBody.position.z - 6);
